@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SubmissionSeal — Assignment Integrity Verifier</title>
+<style>
+:root{font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;color:#172033;background:#f4f6fb}
+*{box-sizing:border-box}body{margin:0;padding:28px 14px}
+main{max-width:920px;margin:auto}.hero{background:#172033;color:#fff;border-radius:18px;padding:26px}
+.hero h1{margin:0 0 8px;font-size:clamp(26px,4vw,38px)}.hero p{margin:0;color:#d8deed;line-height:1.5}
+.tag{display:inline-block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#a9c5ff;margin-bottom:10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:16px}
+.card{background:white;border:1px solid #e0e5ef;border-radius:16px;padding:20px;box-shadow:0 5px 20px #1720330a}
+h2{font-size:19px;margin:0 0 10px}p{line-height:1.5}.muted{color:#63708a;font-size:14px}
+button,.filebutton{background:#244fcb;color:white;border:0;border-radius:10px;padding:11px 14px;font-weight:650;cursor:pointer;display:inline-block}
+button.secondary{background:#e9eefc;color:#203c90}button:disabled{opacity:.5;cursor:not-allowed}
+input[type=file]{display:block;width:100%;margin:14px 0}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.output{background:#f7f9fd;border:1px solid #e2e8f3;border-radius:10px;padding:12px;margin-top:12px;overflow-wrap:anywhere;font-size:13px}
+.hash{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;word-break:break-all}
+.status{font-weight:750}.good{color:#167347}.bad{color:#b42318}.warn{color:#8b5b00}
+label{font-weight:650;font-size:14px}.history{padding-left:18px}.history li{margin:8px 0;overflow-wrap:anywhere}
+footer{color:#69758c;font-size:12px;text-align:center;margin:18px 0}
+</style>
+</head>
+<body>
+<main>
+<section class="hero">
+<div class="tag">BCS703 · Cryptography & Network Security</div>
+<h1>Hash-Trace</h1>
+<p>A lightweight assignment integrity checker. Create a SHA-256 fingerprint for a submitted file, save a verification manifest, and later test whether the file is byte-for-byte unchanged.</p>
+</section>
+<div class="grid">
+<section class="card">
+<h2>1. Seal an original file</h2>
+<p class="muted">Choose the original assignment file to calculate its cryptographic fingerprint.</p>
+<label for="original">Original file</label>
+<input id="original" type="file">
+<div class="actions"><button id="seal">Create seal</button></div>
+<div id="sealOut" class="output" aria-live="polite">No file sealed yet.</div>
+<div class="actions"><button id="download" class="secondary" disabled>Export manifest (.json)</button></div>
+</section>
+<section class="card">
+<h2>2. Verify a file</h2>
+<p class="muted">Compare a selected file against a saved manifest. Any byte-level change should produce a mismatch.</p>
+<label for="candidate">File to verify</label>
+<input id="candidate" type="file">
+<label for="manifest">Saved manifest (optional import)</label>
+<input id="manifest" type="file" accept=".json,application/json">
+<div class="actions"><button id="verify">Verify integrity</button></div>
+<div id="verifyOut" class="output" aria-live="polite">Select a file and use the current seal or import a manifest.</div>
+</section>
+<section class="card">
+<h2>3. Recent local seals</h2>
+<p class="muted">Seals are stored only in this browser on this device. Export a manifest to keep a portable reference.</p>
+<div class="actions"><button id="refresh" class="secondary">Refresh history</button><button id="clear" class="secondary">Clear history</button></div>
+<ul id="history" class="history"><li>No saved seals yet.</li></ul>
+</section>
+<section class="card">
+<h2>How it works</h2>
+<ul>
+<li>Reads file bytes in the browser.</li>
+<li>Computes a SHA-256 digest with the Web Crypto API.</li>
+<li>Compares the digest with the saved reference.</li>
+<li>Exports a JSON manifest containing filename, size, timestamp, algorithm, and digest.</li>
+</ul>
+<p class="muted">Important: the manifest itself must be protected. If an attacker can replace both the file and its reference manifest, this local demo cannot prove authenticity. For stronger provenance, sign manifests or store them in a trusted external system.</p>
+</section>
+</div>
+<footer>Your Files. Your Privacy. Verified Locally.</footer>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let currentSeal = null;
+let importedManifest = null;
+const KEY = "hashtrace.history.v1";
+
+async function sha256(file) {
+  if (!globalThis.crypto?.subtle) throw new Error("Web Crypto is unavailable. Open this file in a current browser, or serve it from localhost.");
+  const bytes = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2,"0")).join("");
+}
+function getHistory(){try{return JSON.parse(localStorage.getItem(KEY)||"[]")}catch{return []}}
+function saveHistory(items){localStorage.setItem(KEY,JSON.stringify(items.slice(0,10)))}
+function showHash(seal){return `<div><b>File:</b> ${escapeHtml(seal.name)}<br><b>Size:</b> ${seal.size} bytes<br><b>SHA-256:</b><div class="hash">${seal.sha256}</div><b>Created:</b> ${escapeHtml(seal.createdAt)}</div>`}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function manifestFor(seal){return {project:"Hash-Trace",version:1,algorithm:"SHA-256",filename:seal.name,sizeBytes:seal.size,createdAt:seal.createdAt,sha256:seal.sha256,note:"Educational integrity reference. Protect this manifest separately."}}
+function downloadText(filename,text,mime){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type:mime}));a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+$("seal").addEventListener("click",async()=>{
+ const f=$("original").files[0]; if(!f){$("sealOut").textContent="Choose an original file first.";return}
+ $("seal").disabled=true;$("sealOut").textContent="Calculating SHA-256…";
+ try{
+  currentSeal={name:f.name,size:f.size,createdAt:new Date().toISOString(),sha256:await sha256(f)};
+  const h=getHistory();h.unshift(currentSeal);saveHistory(h);
+  $("sealOut").innerHTML='<div class="status good">SEAL CREATED</div>'+showHash(currentSeal);
+  $("download").disabled=false;renderHistory();
+ }catch(e){$("sealOut").textContent=e.message}finally{$("seal").disabled=false}
+});
+$("download").addEventListener("click",()=>{if(!currentSeal)return;downloadText("hashtrace-manifest.json",JSON.stringify(manifestFor(currentSeal),null,2),"application/json")});
+$("manifest").addEventListener("change",async()=>{
+ const f=$("manifest").files[0];if(!f){importedManifest=null;return}
+ try{
+  const m=JSON.parse(await f.text());
+  if(m.algorithm!=="SHA-256"||typeof m.sha256!=="string"||!/^[0-9a-f]{64}$/i.test(m.sha256))throw new Error("Manifest is missing a valid SHA-256 digest.");
+  importedManifest=m;$("verifyOut").innerHTML='<span class="status good">MANIFEST LOADED</span><br>Reference file: '+escapeHtml(m.filename||"Unknown")+'<br>SHA-256: <div class="hash">'+escapeHtml(m.sha256)+'</div>';
+ }catch(e){importedManifest=null;$("verifyOut").textContent="Cannot read manifest: "+e.message}
+});
+$("verify").addEventListener("click",async()=>{
+ const f=$("candidate").files[0];if(!f){$("verifyOut").textContent="Choose a file to verify.";return}
+ const reference=importedManifest|| (currentSeal?manifestFor(currentSeal):null);
+ if(!reference){$("verifyOut").textContent="Create a seal first or import a manifest.";return}
+ $("verify").disabled=true;$("verifyOut").textContent="Checking file…";
+ try{
+  const actual=await sha256(f),same=actual.toLowerCase()===reference.sha256.toLowerCase();
+  $("verifyOut").innerHTML=`<div class="status ${same?"good":"bad"}">${same?"VERIFIED — CONTENT MATCHES":"MISMATCH — FILE DIFFERS"}</div><p>Reference: ${escapeHtml(reference.filename||currentSeal?.name||"Saved file")}</p><p>Selected: ${escapeHtml(f.name)} (${f.size} bytes)</p><p><b>Expected SHA-256</b><div class="hash">${escapeHtml(reference.sha256)}</div></p><p><b>Actual SHA-256</b><div class="hash">${actual}</div></p><p class="muted">${same?"The file bytes match the selected reference digest.":"The selected file does not match the reference digest."}</p>`;
+ }catch(e){$("verifyOut").textContent=e.message}finally{$("verify").disabled=false}
+});
+function renderHistory(){
+ const h=getHistory();$("history").innerHTML=h.length?h.map(x=>`<li><b>${escapeHtml(x.name)}</b><br><span class="muted">${new Date(x.createdAt).toLocaleString()} · ${x.size} bytes</span><br><span class="hash">${x.sha256}</span></li>`).join(""):"<li>No saved seals yet.</li>";
+}
+$("refresh").addEventListener("click",renderHistory);
+$("clear").addEventListener("click",()=>{if(confirm("Clear all Hash-Trace history stored in this browser?")){localStorage.removeItem(KEY);renderHistory()}});
+renderHistory();
+</script>
+</body>
+</html>
